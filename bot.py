@@ -3,7 +3,7 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-BOT_TOKEN = "8406888420:AAFPhsI7q-eDr3n34uZLIZma_RRzhJasV7M"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 DB_FILE = "meal_votes.db"
 
 
