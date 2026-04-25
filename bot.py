@@ -2,7 +2,6 @@ import sqlite3
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from http.server import 
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
