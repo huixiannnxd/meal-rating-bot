@@ -1,4 +1,5 @@
 import sqlite3
+import os
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
