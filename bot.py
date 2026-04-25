@@ -1,5 +1,8 @@
 import sqlite3
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import 
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -7,7 +10,17 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DB_FILE = "meal_votes.db"
 
+def run_web_server():
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Bot is running!")
 
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    server.serve_forever()
+    
 # Initialize database
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -186,7 +199,7 @@ async def tally(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # main
 def main():
     init_db()
-
+    threading.Thread(target=run_web_server, daemon=True).start()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
