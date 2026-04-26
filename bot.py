@@ -2,12 +2,25 @@ import sqlite3
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from datetime import datetime
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DB_FILE = "meal_votes.db"
+
+NAMES = ["hx", "chole", "mel"]
+VOTES = {
+    "good": "👍",
+    "ok": "👌",
+    "bad": "👎",
+}
+
 
 def run_web_server():
     class Handler(BaseHTTPRequestHandler):
@@ -19,8 +32,8 @@ def run_web_server():
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()
-    
-# Initialize database
+
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
@@ -49,66 +62,7 @@ def init_db():
     conn.close()
 
 
-# /start command
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Meal Rating Bot 🍱\n\n"
-        "/initiate - start a new weekly round\n"
-        "/rate <name> <good|ok|bad>\n"
-        "/tally - show results"
-    )
-
-
-# /initiate command
-async def initiate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    now = datetime.now().isoformat(timespec="seconds")
-
-    conn = sqlite3.connect(DB_FILE)
-    cur = conn.cursor()
-
-    cur.execute("""
-        INSERT INTO rounds (chat_id, round_started_at)
-        VALUES (?, ?)
-        ON CONFLICT(chat_id)
-        DO UPDATE SET round_started_at = excluded.round_started_at
-    """, (chat_id, now))
-
-    conn.commit()
-    conn.close()
-
-    await update.message.reply_text("New weekly round started! 🍱")
-
-
-# /rate command
-async def rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    user = update.effective_user
-
-    if len(context.args) < 2:
-        await update.message.reply_text(
-            "Usage:\n/rate <name> <good|ok|bad>\n\nExample:\n/rate HuiXian good"
-        )
-        return
-
-    vote_input = context.args[-1].lower()
-    target_name = " ".join(context.args[:-1]).strip()
-
-    valid_votes = {
-        "good": "good",
-        "ok": "ok",
-        "bad": "bad",
-        "👍": "good",
-        "👌": "ok",
-        "👎": "bad"
-    }
-
-    if vote_input not in valid_votes:
-        await update.message.reply_text("Vote must be: good, ok, or bad")
-        return
-
-    vote = valid_votes[vote_input]
-
+def save_vote(chat_id, user, target_name, vote):
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
 
@@ -117,8 +71,7 @@ async def rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not row:
         conn.close()
-        await update.message.reply_text("No active round. Use /initiate first.")
-        return
+        return False
 
     round_started_at = row[0]
 
@@ -140,12 +93,95 @@ async def rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn.commit()
     conn.close()
-
-    emoji = {"good": "👍", "ok": "👌", "bad": "👎"}[vote]
-    await update.message.reply_text(f"{target_name}: {emoji}")
+    return True
 
 
-# /tally command
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Meal Rating Bot 🍱\n\n"
+        "/initiate - start a new weekly round\n"
+        "/rate - rate hx / chole / mel\n"
+        "/tally - show results"
+    )
+
+
+async def initiate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    now = datetime.now().isoformat(timespec="seconds")
+
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO rounds (chat_id, round_started_at)
+        VALUES (?, ?)
+        ON CONFLICT(chat_id)
+        DO UPDATE SET round_started_at = excluded.round_started_at
+    """, (chat_id, now))
+
+    conn.commit()
+    conn.close()
+
+    await update.message.reply_text("New weekly round started! 🍱")
+
+
+async def rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton(name, callback_data=f"name_{name}")]
+        for name in NAMES
+    ]
+
+    await update.message.reply_text(
+        "Who are you rating?",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def handle_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    selected_name = query.data.replace("name_", "")
+    context.user_data["target_name"] = selected_name
+
+    keyboard = [
+        [InlineKeyboardButton(f"{emoji} {vote}", callback_data=f"vote_{vote}")]
+        for vote, emoji in VOTES.items()
+    ]
+
+    await query.edit_message_text(
+        text=f"Selected: {selected_name}\nChoose rating:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def handle_vote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    vote = query.data.replace("vote_", "")
+    target_name = context.user_data.get("target_name")
+
+    chat_id = query.message.chat_id
+    user = query.from_user
+
+    if not target_name:
+        await query.edit_message_text("Please use /rate again.")
+        return
+
+    success = save_vote(chat_id, user, target_name, vote)
+
+    if not success:
+        await query.edit_message_text("No active round. Use /initiate first.")
+        return
+
+    emoji = VOTES[vote]
+
+    await query.edit_message_text(
+        text=f"{target_name}: {emoji}"
+    )
+
+
 async def tally(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
@@ -195,16 +231,19 @@ async def tally(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message)
 
 
-# main
 def main():
     init_db()
     threading.Thread(target=run_web_server, daemon=True).start()
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("initiate", initiate))
     app.add_handler(CommandHandler("rate", rate))
     app.add_handler(CommandHandler("tally", tally))
+
+    app.add_handler(CallbackQueryHandler(handle_name, pattern="^name_"))
+    app.add_handler(CallbackQueryHandler(handle_vote, pattern="^vote_"))
 
     print("Bot is running...")
     app.run_polling()
